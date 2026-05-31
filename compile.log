@@ -1,0 +1,68 @@
+Build summary:
+ > Sources: ['csrc/deep_ep.cpp', 'csrc/kernels/runtime.cu', 'csrc/kernels/layout.cu', 'csrc/kernels/intranode.cu', 'csrc/kernels/internode.cu', 'csrc/kernels/internode_ll.cu']
+ > Includes: ['csrc/', '/usr/local/nvshmem/include']
+ > Libraries: ['/usr/local/nvshmem/lib']
+ > Compilation flags: {'cxx': ['-O3', '-Wno-deprecated-declarations', '-Wno-unused-variable', '-Wno-sign-compare', '-Wno-reorder', '-Wno-attributes', '-DDISABLE_AGGRESSIVE_PTX_INSTRS'], 'nvcc': ['-O3', '-Xcompiler', '-O3', '-rdc=true', '-DDISABLE_AGGRESSIVE_PTX_INSTRS'], 'nvcc_dlink': ['-dlink', '-L/usr/local/nvshmem/lib', '-lnvshmem_device']}
+ > Link flags: ['-l:libnvshmem_host.so', '-l:libnvshmem_device.a', '-Wl,-rpath,/usr/local/nvshmem/lib']
+ > Arch list: 8.0
+ > NVSHMEM path: /usr/local/nvshmem
+
+running install
+/usr/lib/python3/dist-packages/setuptools/command/install.py:34: SetuptoolsDeprecationWarning: setup.py install is deprecated. Use build and pip and other standards-based tools.
+  warnings.warn(
+/usr/lib/python3/dist-packages/setuptools/command/easy_install.py:158: EasyInstallDeprecationWarning: easy_install command is deprecated. Use build and pip and other standards-based tools.
+  warnings.warn(
+running bdist_egg
+running egg_info
+creating deep_ep.egg-info
+writing deep_ep.egg-info/PKG-INFO
+writing dependency_links to deep_ep.egg-info/dependency_links.txt
+writing top-level names to deep_ep.egg-info/top_level.txt
+writing manifest file 'deep_ep.egg-info/SOURCES.txt'
+reading manifest file 'deep_ep.egg-info/SOURCES.txt'
+adding license file 'LICENSE'
+writing manifest file 'deep_ep.egg-info/SOURCES.txt'
+installing library code to build/bdist.linux-x86_64/egg
+running install_lib
+running build_py
+running build_ext
+/usr/local/lib/python3.10/dist-packages/torch/utils/cpp_extension.py:490: UserWarning: There are no x86_64-linux-gnu-g++ version bounds defined for CUDA version 12.6
+  warnings.warn(f'There are no {compiler_name} version bounds defined for CUDA version {cuda_str_version}')
+building 'deep_ep_cpp' extension
+Emitting ninja build file /home/yang.zhuo/src/DeepEP/build/temp.linux-x86_64-3.10/build.ninja...
+Compiling objects...
+Allowing ninja to set a default number of workers... (overridable by setting the environment variable MAX_JOBS=N)
+ninja: no work to do.
+x86_64-linux-gnu-g++ -shared -Wl,-O1 -Wl,-Bsymbolic-functions -Wl,-Bsymbolic-functions -g -fwrapv -O2 -Wl,-Bsymbolic-functions -g -fwrapv -O2 -g -fstack-protector-strong -Wformat -Werror=format-security -Wdate-time -D_FORTIFY_SOURCE=2 /home/yang.zhuo/src/DeepEP/build/temp.linux-x86_64-3.10/csrc/deep_ep.o /home/yang.zhuo/src/DeepEP/build/temp.linux-x86_64-3.10/csrc/kernels/internode.o /home/yang.zhuo/src/DeepEP/build/temp.linux-x86_64-3.10/csrc/kernels/internode_ll.o /home/yang.zhuo/src/DeepEP/build/temp.linux-x86_64-3.10/csrc/kernels/intranode.o /home/yang.zhuo/src/DeepEP/build/temp.linux-x86_64-3.10/csrc/kernels/layout.o /home/yang.zhuo/src/DeepEP/build/temp.linux-x86_64-3.10/csrc/kernels/runtime.o /home/yang.zhuo/src/DeepEP/build/temp.linux-x86_64-3.10/csrc/dlink.o -L/usr/local/nvshmem/lib -L/usr/local/lib/python3.10/dist-packages/torch/lib -L/usr/local/cuda/lib64 -lc10 -ltorch -ltorch_cpu -ltorch_python -lcudart -lc10_cuda -ltorch_cuda -o build/lib.linux-x86_64-3.10/deep_ep_cpp.cpython-310-x86_64-linux-gnu.so -l:libnvshmem_host.so -l:libnvshmem_device.a -Wl,-rpath,/usr/local/nvshmem/lib
+creating build/bdist.linux-x86_64
+creating build/bdist.linux-x86_64/egg
+creating build/bdist.linux-x86_64/egg/deep_ep
+copying build/lib.linux-x86_64-3.10/deep_ep/__init__.py -> build/bdist.linux-x86_64/egg/deep_ep
+copying build/lib.linux-x86_64-3.10/deep_ep/buffer.py -> build/bdist.linux-x86_64/egg/deep_ep
+copying build/lib.linux-x86_64-3.10/deep_ep/utils.py -> build/bdist.linux-x86_64/egg/deep_ep
+copying build/lib.linux-x86_64-3.10/deep_ep_cpp.cpython-310-x86_64-linux-gnu.so -> build/bdist.linux-x86_64/egg
+byte-compiling build/bdist.linux-x86_64/egg/deep_ep/__init__.py to __init__.cpython-310.pyc
+byte-compiling build/bdist.linux-x86_64/egg/deep_ep/buffer.py to buffer.cpython-310.pyc
+byte-compiling build/bdist.linux-x86_64/egg/deep_ep/utils.py to utils.cpython-310.pyc
+creating stub loader for deep_ep_cpp.cpython-310-x86_64-linux-gnu.so
+byte-compiling build/bdist.linux-x86_64/egg/deep_ep_cpp.py to deep_ep_cpp.cpython-310.pyc
+creating build/bdist.linux-x86_64/egg/EGG-INFO
+copying deep_ep.egg-info/PKG-INFO -> build/bdist.linux-x86_64/egg/EGG-INFO
+copying deep_ep.egg-info/SOURCES.txt -> build/bdist.linux-x86_64/egg/EGG-INFO
+copying deep_ep.egg-info/dependency_links.txt -> build/bdist.linux-x86_64/egg/EGG-INFO
+copying deep_ep.egg-info/top_level.txt -> build/bdist.linux-x86_64/egg/EGG-INFO
+writing build/bdist.linux-x86_64/egg/EGG-INFO/native_libs.txt
+zip_safe flag not set; analyzing archive contents...
+__pycache__.deep_ep_cpp.cpython-310: module references __file__
+creating dist
+creating 'dist/deep_ep-1.2.1+f3cc418-py3.10-linux-x86_64.egg' and adding 'build/bdist.linux-x86_64/egg' to it
+removing 'build/bdist.linux-x86_64/egg' (and everything under it)
+Processing deep_ep-1.2.1+f3cc418-py3.10-linux-x86_64.egg
+creating /usr/local/lib/python3.10/dist-packages/deep_ep-1.2.1+f3cc418-py3.10-linux-x86_64.egg
+Extracting deep_ep-1.2.1+f3cc418-py3.10-linux-x86_64.egg to /usr/local/lib/python3.10/dist-packages
+Removing deep-ep 1.2.1+e02e4d2 from easy-install.pth file
+Adding deep-ep 1.2.1+f3cc418 to easy-install.pth file
+
+Installed /usr/local/lib/python3.10/dist-packages/deep_ep-1.2.1+f3cc418-py3.10-linux-x86_64.egg
+Processing dependencies for deep-ep==1.2.1+f3cc418
+Finished processing dependencies for deep-ep==1.2.1+f3cc418

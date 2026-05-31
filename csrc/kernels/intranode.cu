@@ -220,22 +220,6 @@ dispatch(int4* recv_x, float* recv_x_scales, int* recv_src_idx, topk_idx_t* recv
     auto channel_topk_weights_buffers = Buffer<float>(ptr, num_channels_total * num_recv_buffer_tokens * num_topk, channel_rank_offset * num_recv_buffer_tokens * num_topk);
     auto channel_x_scales_buffers = Buffer<float>(ptr, num_channels_total * num_recv_buffer_tokens * num_scales, channel_rank_offset * num_recv_buffer_tokens * num_scales);
 
-    // TMA stuffs
-#ifndef DISABLE_SM90_FEATURES
-    extern __shared__ __align__(1024) uint8_t smem_buffer[];
-    auto half_hidden_int4 = hidden_int4 / 2;
-    auto half_hidden_bytes = half_hidden_int4 * static_cast<int>(sizeof(int4));
-    auto tma_buffer = smem_buffer + (thread_id / 32) * kNumTMABytesPerWarp;
-    auto tma_mbarrier = reinterpret_cast<uint64_t*>(tma_buffer + half_hidden_bytes);
-    uint32_t tma_phase = 0;
-    if (elect_one_sync()) {
-        mbarrier_init(tma_mbarrier, 1);
-        fence_barrier_init();
-        EP_DEVICE_ASSERT(hidden_int4 % 2 == 0 and half_hidden_bytes + sizeof(uint64_t) <= kNumTMABytesPerWarp);
-    }
-    __syncwarp();
-#endif
-
     if (is_sender) {
         // Workers for sending
         constexpr int num_send_warps = kNumThreads / 32;
@@ -398,22 +382,8 @@ dispatch(int4* recv_x, float* recv_x_scales, int* recv_src_idx, topk_idx_t* recv
                 int token_idx_in_buffer = (cached_channel_head_idx + chunk_idx) % num_recv_buffer_tokens;
                 auto shifted_buffer_x_int4 = channel_x_buffers.buffer() + token_idx_in_buffer * hidden_int4;
                 auto shifted_recv_x_int4 = recv_x + static_cast<int64_t>(total_offset + chunk_idx) * hidden_int4;
-#ifndef DISABLE_SM90_FEATURES
-                #pragma unroll
-                for (int i = 0; i < 2; ++ i) {
-                    tma_store_wait<0>();
-                    if (elect_one_sync()) {
-                        tma_load_1d(tma_buffer, shifted_buffer_x_int4 + i * half_hidden_int4, tma_mbarrier, half_hidden_bytes);
-                        mbarrier_arrive_and_expect_tx(tma_mbarrier, half_hidden_bytes);
-                        mbarrier_wait(tma_mbarrier, tma_phase);
-                        tma_store_1d(tma_buffer, shifted_recv_x_int4 + i * half_hidden_int4, half_hidden_bytes, false);
-                    }
-                }
-                __syncwarp();
-#else
                 UNROLLED_WARP_COPY(5, lane_id, hidden_int4, shifted_recv_x_int4, shifted_buffer_x_int4,
                                    ld_nc_global, st_na_global);
-#endif
             }
 
             // Copy `src_idx`
@@ -475,9 +445,7 @@ void dispatch(void* recv_x, float* recv_x_scales, int* recv_src_idx, topk_idx_t*
               cudaStream_t stream, int num_sms, int num_max_send_tokens, int num_recv_buffer_tokens) {
     constexpr int kNumThreads = 768;
     constexpr int kNumTMABytesPerWarp = 8192;
-#ifndef DISABLE_SM90_FEATURES
     constexpr int smem_size = kNumTMABytesPerWarp * (kNumThreads / 32);
-#endif
 
     // Make sure never OOB
     EP_HOST_ASSERT(static_cast<int64_t>(num_scales) * scale_hidden_stride < std::numeric_limits<int>::max());
@@ -594,12 +562,6 @@ combine(dtype_t* recv_x, float* recv_topk_weights,
     auto bias_0_int4 = reinterpret_cast<const int4*>(bias_0);
     auto bias_1_int4 = reinterpret_cast<const int4*>(bias_1);
     auto recv_int4 = reinterpret_cast<int4*>(recv_x);
-
-    // TMA stuffs
-#ifndef DISABLE_SM90_FEATURES
-    extern __shared__ __align__(1024) uint8_t smem_buffer[];
-    auto tma_buffer = smem_buffer + (thread_id / 32) * kNumTMABytesPerWarp;
-#endif
 
     if (is_sender) {
         // Workers for sending
@@ -790,12 +752,6 @@ combine(dtype_t* recv_x, float* recv_topk_weights,
                     }
                 }
 
-                // Wait shared memory release
-#ifndef DISABLE_SM90_FEATURES
-                tma_store_wait<0>();
-                __syncwarp();
-#endif
-
                 // Reduce data with pipeline
                 constexpr int kNumStages = 8;
                 EP_STATIC_ASSERT(kNumStages * 32 * sizeof(int4) <= kNumTMABytesPerWarp, "Invalid count");
@@ -835,32 +791,7 @@ combine(dtype_t* recv_x, float* recv_topk_weights,
                     #pragma unroll
                     for (int j = 0; j < kDtypePerInt4; ++ j)
                         out_dtypes[j] = static_cast<dtype_t>(values[j]);
-
-#ifndef DISABLE_SM90_FEATURES
-                    if (i < hidden_int4_aligned) {
-                        // Wait TMA arrival
-                        tma_store_wait<kNumStages - 1>();
-                        __syncwarp();
-
-                        // Write into TMA buffer
-                        auto tma_stage_idx = (i / 32) % kNumStages;
-                        reinterpret_cast<int4*>(tma_buffer)[tma_stage_idx * 32 + lane_id] = out_int4;
-
-                        // Issue TMA
-                        tma_store_fence();
-                        __syncwarp();
-                        if (elect_one_sync()) {
-                            auto tma_bytes = min(32, hidden_int4 - i) * static_cast<int>(sizeof(int4));
-                            tma_store_1d(reinterpret_cast<int4*>(tma_buffer) + tma_stage_idx * 32,
-                                        recv_int4 + token_idx * hidden_int4 + i, tma_bytes, false);
-                        }
-                        __syncwarp();
-                    } else {
-#endif
-                        recv_int4[token_idx * hidden_int4 + i] = out_int4;
-#ifndef DISABLE_SM90_FEATURES
-                    }
-#endif
+                    recv_int4[token_idx * hidden_int4 + i] = out_int4;
                 }
 
                 // Reduce `topk_weights`
@@ -896,9 +827,7 @@ void combine(cudaDataType_t type,
              int num_max_send_tokens, int num_recv_buffer_tokens) {
     constexpr int kNumThreads = 768;
     constexpr int kNumTMABytesPerWarp = 4096;
-#ifndef DISABLE_SM90_FEATURES
     constexpr int smem_size = kNumTMABytesPerWarp * (kNumThreads / 32);
-#endif
 
 #define COMBINE_LAUNCH_CASE(dtype, ranks) { \
     auto kernel = combine<dtype, ranks, kNumThreads, kNumTMABytesPerWarp>; \

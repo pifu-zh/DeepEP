@@ -1122,6 +1122,10 @@ Buffer::low_latency_dispatch(const torch::Tensor& x, const torch::Tensor& topk_i
     EP_HOST_ASSERT(x.size(0) == topk_idx.size(0) and x.size(0) <= num_max_dispatch_tokens_per_rank);
     EP_HOST_ASSERT(topk_idx.scalar_type() == c10::CppTypeToScalarType<topk_idx_t>::value);
     EP_HOST_ASSERT(num_experts % num_ranks == 0);
+#ifdef DISABLE_SM90_FEATURES
+    EP_HOST_ASSERT(not use_fp8 and "FP8 low-latency dispatch is not supported on SM80");
+    EP_HOST_ASSERT(not use_ue8m0 and "UE8M0 low-latency dispatch is not supported on SM80");
+#endif
 
     // Diagnosis tensors
     if (cumulative_local_expert_recv_stats.has_value()) {
@@ -1349,11 +1353,7 @@ Buffer::get_next_low_latency_combine_buffer(int num_max_dispatch_tokens_per_rank
 }
 
 bool is_sm90_compiled() {
-#ifndef DISABLE_SM90_FEATURES
-    return true;
-#else
     return false;
-#endif
 }
 
 void Buffer::low_latency_update_mask_buffer(int rank_to_mask, bool mask) {

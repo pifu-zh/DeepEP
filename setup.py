@@ -53,22 +53,11 @@ if __name__ == '__main__':
         nvcc_dlink.extend(['-dlink', f'-L{nvshmem_dir}/lib', '-lnvshmem_device'])
         extra_link_args.extend([f'-l:{nvshmem_host_lib}', '-l:libnvshmem_device.a', f'-Wl,-rpath,{nvshmem_dir}/lib'])
 
-    if int(os.getenv('DISABLE_SM90_FEATURES', 0)):
-        # Prefer A100
-        os.environ['TORCH_CUDA_ARCH_LIST'] = os.getenv('TORCH_CUDA_ARCH_LIST', '8.0')
+    # Prefer A100
+    os.environ['TORCH_CUDA_ARCH_LIST'] = os.getenv('TORCH_CUDA_ARCH_LIST', '8.0')
 
-        # Disable some SM90 features: FP8, launch methods, and TMA
-        cxx_flags.append('-DDISABLE_SM90_FEATURES')
-        nvcc_flags.append('-DDISABLE_SM90_FEATURES')
-
-        # Disable internode and low-latency kernels
-        assert disable_nvshmem
-    else:
-        # Prefer H800 series
-        os.environ['TORCH_CUDA_ARCH_LIST'] = os.getenv('TORCH_CUDA_ARCH_LIST', '9.0')
-
-        # CUDA 12 flags
-        nvcc_flags.extend(['-rdc=true', '--ptxas-options=--register-usage-level=10'])
+    # RDC is required for NVSHMEM device code linking
+    nvcc_flags.append('-rdc=true')
 
     # Disable LD/ST tricks, as some CUDA version does not support `.L1::no_allocate`
     if os.environ['TORCH_CUDA_ARCH_LIST'].strip() != '9.0':

@@ -311,96 +311,87 @@ __forceinline__ __device__ int get_lane_id() {
 }
 
 __device__ __forceinline__ uint32_t elect_one_sync() {
-#ifndef DISABLE_SM90_FEATURES
-    uint32_t pred = 0;
-    asm volatile(
-      "{\n"
-      ".reg .b32 %%rx;\n"
-      ".reg .pred %%px;\n"
-      "      elect.sync %%rx|%%px, %1;\n"
-      "@%%px mov.s32 %0, 1;\n"
-      "}\n"
-      : "+r"(pred)
-      : "r"(0xffffffff));
-    return pred;
-#else
     return get_lane_id() == 0;
-#endif
 }
 
-// TMA PTX instructions
-#ifndef DISABLE_SM90_FEATURES
+// SM80 fallback implementations for TMA and mbarrier
+// TMA is replaced with single-thread synchronous loads/stores
+// Single-thread execution ensures compatibility with elect_one_sync() callers
+//
+// mbarrier emulation: uint64_t mbar stores [arrive_count|current_count] as two uint32_t
+//   high 32 bits = arrive_count (target), low 32 bits = current_count (monotonic)
+//   mbarrier_arrive / mbarrier_arrive_and_expect_tx: atomicAdd on low 32 bits
+//   mbarrier_wait: parity check (counter / arrive_count) % 2 to distinguish rounds
+//   No reset needed: monotonic counter + parity tracking replaces manual reset
 
 __device__ __forceinline__ void fence_barrier_init() {
-    asm volatile("fence.mbarrier_init.release.cluster; \n" :: );
+    __syncwarp();
 }
 
 __device__ __forceinline__ void mbarrier_init(uint64_t* mbar_ptr, uint32_t arrive_count) {
-    auto mbar_int_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(mbar_ptr));
-    asm volatile("mbarrier.init.shared::cta.b64 [%1], %0;" :: "r"(arrive_count), "r"(mbar_int_ptr));
+    *mbar_ptr = static_cast<uint64_t>(arrive_count) << 32;
 }
 
 __device__ __forceinline__ void mbarrier_inval(uint64_t* mbar_ptr) {
-    auto mbar_int_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(mbar_ptr));
-    asm volatile("mbarrier.inval.shared::cta.b64 [%0];" :: "r"(mbar_int_ptr));
+    *mbar_ptr = 0;
 }
 
 template <bool kWithMultiStages = false>
 __device__ __forceinline__ void mbarrier_wait(uint64_t* mbar_ptr, uint32_t& phase, int stage_idx = 0) {
-    auto mbar_int_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(mbar_ptr));
-    const auto& wait = kWithMultiStages ? (phase >> stage_idx) & 1 : phase;
-    asm volatile("{\n\t"
-                 ".reg .pred       P1; \n\t"
-                 "LAB_WAIT: \n\t"
-                 "mbarrier.try_wait.parity.shared::cta.b64 P1, [%0], %1, %2; \n\t"
-                 "@P1 bra DONE; \n\t"
-                 "bra     LAB_WAIT; \n\t"
-                 "DONE: \n\t"
-                 "}" :: "r"(mbar_int_ptr), "r"(wait), "r"(0x989680));
-    phase ^= kWithMultiStages ? (1 << stage_idx) : 1;
+    uint32_t arrive_count = static_cast<uint32_t>(*mbar_ptr >> 32);
+    if (arrive_count > 0) {
+        volatile uint32_t* counter = reinterpret_cast<volatile uint32_t*>(mbar_ptr);
+        uint32_t phase_bit = kWithMultiStages ? ((phase >> stage_idx) & 1) : (phase & 1);
+        uint32_t expected_parity = phase_bit ^ 1;
+        while (((*counter) / arrive_count) % 2 != expected_parity)
+            __threadfence_block();
+        __threadfence_block();
+    }
+    if constexpr (kWithMultiStages)
+        phase ^= (1u << stage_idx);
+    else
+        phase ^= 1u;
 }
 
 __device__ __forceinline__ void mbarrier_arrive_and_expect_tx(uint64_t* mbar_ptr, int num_bytes) {
-    auto mbar_int_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(mbar_ptr));
-    asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%1], %0; \n\t" :: "r"(num_bytes), "r"(mbar_int_ptr));
+    atomicAdd(reinterpret_cast<uint32_t*>(mbar_ptr), 1);
+    __threadfence_block();
 }
 
 __device__ __forceinline__ void mbarrier_arrive(uint64_t* mbar_ptr) {
-    auto mbar_int_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(mbar_ptr));
-    asm volatile("mbarrier.arrive.shared::cta.b64 _, [%0]; \n\t" :: "r"(mbar_int_ptr));
+    atomicAdd(reinterpret_cast<uint32_t*>(mbar_ptr), 1);
+    __threadfence_block();
+}
+
+__device__ __forceinline__ void mbarrier_reset(uint64_t* mbar_ptr) {
+    // No-op: monotonic counter + parity tracking replaces manual reset
 }
 
 __device__ __forceinline__ void tma_store_fence() {
-    asm volatile ("fence.proxy.async.shared::cta;");
+    __syncwarp();
 }
-
-constexpr uint64_t kEvictFirst = 0x12f0000000000000;
-constexpr uint64_t kEvictNormal = 0x1000000000000000;
 
 __device__ __forceinline__ void tma_load_1d(const void* smem_ptr, const void* gmem_ptr, uint64_t* mbar_ptr, int num_bytes,
                                             bool evict_first = true) {
-    auto mbar_int_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(mbar_ptr));
-    auto smem_int_ptr  = static_cast<uint32_t>(__cvta_generic_to_shared(smem_ptr));
-    const auto cache_hint = evict_first ? kEvictFirst : kEvictNormal;
-    asm volatile("cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes.L2::cache_hint [%0], [%1], %2, [%3], %4;\n"
-                 :: "r"(smem_int_ptr), "l"(gmem_ptr), "r"(num_bytes), "r"(mbar_int_ptr), "l"(cache_hint) : "memory");
+    auto* smem = reinterpret_cast<int4*>(const_cast<void*>(smem_ptr));
+    auto* gmem = reinterpret_cast<const int4*>(gmem_ptr);
+    int num_int4 = num_bytes / sizeof(int4);
+    for (int i = 0; i < num_int4; ++i)
+        smem[i] = ld_nc_global(gmem + i);
 }
 
 __device__ __forceinline__ void tma_store_1d(const void* smem_ptr, const void* gmem_ptr, int num_bytes,
                                              bool evict_first = true) {
-    auto smem_int_ptr = static_cast<uint32_t>(__cvta_generic_to_shared(smem_ptr));
-    const auto cache_hint = evict_first ? kEvictFirst : kEvictNormal;
-    asm volatile("cp.async.bulk.global.shared::cta.bulk_group.L2::cache_hint [%0], [%1], %2, %3;\n"
-                 :: "l"(gmem_ptr), "r"(smem_int_ptr), "r"(num_bytes), "l"(cache_hint) : "memory");
-    asm volatile("cp.async.bulk.commit_group;");
+    auto* smem = reinterpret_cast<const int4*>(smem_ptr);
+    auto* gmem = reinterpret_cast<int4*>(const_cast<void*>(gmem_ptr));
+    int num_int4 = num_bytes / sizeof(int4);
+    for (int i = 0; i < num_int4; ++i)
+        st_na_global(gmem + i, smem[i]);
 }
 
 template <int N>
 __device__ __forceinline__ void tma_store_wait() {
-    asm volatile("cp.async.bulk.wait_group.read %0;" :: "n"(N) : "memory");
 }
-
-#endif
 
 template <typename dtype_t>
 __host__ __device__ constexpr dtype_t ceil_div(dtype_t a, dtype_t b) {
